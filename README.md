@@ -1,4 +1,4 @@
-# YouTube Playlist Migrator
+# YouTube Playlists Migrator
 
 A Java-based command-line application to migrate YouTube playlists from one Google account to another. It handles OAuth 2.0 authentication for both source and target accounts, fetches playlists, and copies videos, while also tracking migration progress.
 
