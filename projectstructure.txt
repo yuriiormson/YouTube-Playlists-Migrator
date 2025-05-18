@@ -1,0 +1,28 @@
+.
+├── .gitignore
+├── build.gradle
+├── gradle
+│   └── wrapper
+│       ├── gradle-wrapper.jar
+│       └── gradle-wrapper.properties
+├── gradlew
+├── gradlew.bat
+├── projectstructure.txt
+├── settings.gradle
+└── src
+    ├── main
+    │   ├── java
+    │   │   └── com
+    │   │       └── youtube
+    │   │           ├── Main.java
+    │   │           ├── MainApp.java
+    │   │           ├── MigrationProgress.java
+    │   │           ├── MigrationProgressTracker.java
+    │   │           ├── PlaylistDetail.java
+    │   │           ├── YouTubeAuth.java
+    │   │           └── YouTubeServiceManager.java
+    │   └── resources
+    │       └── config.properties
+    └── README.MD
+
+9 directories, 17 files

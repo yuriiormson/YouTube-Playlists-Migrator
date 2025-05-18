@@ -1,0 +1,67 @@
+plugins {
+    id 'application'
+    id 'com.github.johnrengelman.shadow' version '8.1.1' // For creating a fat JAR
+    // id 'java' // The 'application' plugin already applies the 'java' plugin
+}
+
+repositories {
+    mavenCentral()
+}
+dependencies {
+    // YouTube Data API
+    implementation 'com.google.apis:google-api-services-youtube:v3-rev20250422-2.0.0'
+
+    // Google OAuth Client
+    implementation 'com.google.oauth-client:google-oauth-client-jetty:1.35.0'
+    implementation 'com.google.auth:google-auth-library-oauth2-http:1.23.0'
+
+    // Google HTTP Client Gson extension (for JsonFactory - preferred)
+    implementation 'com.google.http-client:google-http-client-gson:1.44.2'
+
+    // Jackson for JSON (often a transitive dependency, but good to specify)
+    implementation 'com.fasterxml.jackson.core:jackson-core:2.19.0'
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.19.0'
+
+    // For logging (optional, but recommended)
+    implementation 'org.slf4j:slf4j-simple:2.0.12' // Simple SLF4J implementation
+
+    // Test dependencies
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+application {
+    mainClass = 'com.youtube.MainApp' // Assuming MainApp is in com.youtube package
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+// Configuration for shadowJar to include all dependencies in one JAR file
+shadowJar {
+    // archiveBaseName = 'youtube-playlist-transfer' // Defaults to project name
+    // archiveClassifier = '' // Defaults to null
+    // archiveVersion = '1.0.0' // Defaults to project version
+    mergeServiceFiles() // Important for some Google libraries
+}
+
+// Ensure the run task uses UTF-8 for console output, especially for non-ASCII characters
+tasks.withType(JavaExec) {
+    standardInput = System.in // Keep standard input configured
+    jvmArgs += "-Dfile.encoding=UTF-8" // Consistently set file.encoding as a JVM argument
+}
+
+// Ensure compileJava task uses UTF-8
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+
+group = 'com.youtube'
+version = '1.0-SNAPSHOT'
+
+test {
+    useJUnitPlatform()
+}
