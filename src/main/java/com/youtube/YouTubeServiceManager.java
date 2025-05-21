@@ -1,5 +1,7 @@
 package com.youtube;
 
+import com.google.api.client.googleapis.json.GoogleJsonError;
+import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.services.youtube.YouTube;
 import com.google.api.services.youtube.model.Playlist;
 import com.google.api.services.youtube.model.PlaylistItem;
@@ -10,6 +12,8 @@ import com.google.api.services.youtube.model.PlaylistSnippet;
 import com.google.api.services.youtube.model.PlaylistStatus;
 import com.google.api.services.youtube.model.ResourceId;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -18,6 +22,7 @@ import java.util.Optional;
 
 public class YouTubeServiceManager {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(YouTubeServiceManager.class);
     private final YouTube youtubeService;
 
     public YouTubeServiceManager(YouTube youtubeService) {
@@ -107,10 +112,12 @@ public class YouTubeServiceManager {
      * Adds a video to the specified playlist.
      * @param playlistId The ID of the playlist to which the video is added.
      * @param videoId The ID of the video being added.
-     * @return The added PlaylistItem object.
-     * @throws IOException If an error occurs during the API call.
+     * @return The added PlaylistItem object if successful.
+     * @throws IOException If a non-404 API error occurs or other I/O issue.
+     * @throws VideoNotFoundException if the API returns a 404 error specifically indicating the video was not found.
+     * @throws VideoPreconditionFailedException if the API returns a 400 error with "failedPrecondition" reason.
      */
-    public PlaylistItem addVideoToPlaylist(String playlistId, String videoId) throws IOException {
+    public PlaylistItem addVideoToPlaylist(String playlistId, String videoId) throws IOException, VideoNotFoundException, VideoPreconditionFailedException {
         ResourceId resourceId = new ResourceId();
         resourceId.setKind("youtube#video");
         resourceId.setVideoId(videoId);
@@ -125,7 +132,35 @@ public class YouTubeServiceManager {
 
         YouTube.PlaylistItems.Insert request = youtubeService.playlistItems()
                 .insert(List.of("snippet"), playlistItem);
-        return request.execute();
+        try {
+            return request.execute();
+        } catch (GoogleJsonResponseException e) {
+            if (e.getDetails() != null) { // Ensure details exist
+                int statusCode = e.getStatusCode();
+                List<GoogleJsonError.ErrorInfo> errors = e.getDetails().getErrors();
+                String detailMessage = e.getDetails().getMessage() != null ? e.getDetails().getMessage().toLowerCase() : "";
+
+                if (statusCode == 404 && detailMessage.contains("video not found")) {
+                    // MainApp will log a user-friendly message. This log is for deeper debugging if needed.
+                    // LOGGER.debug("VideoNotFoundException details for videoId: {}: {}", videoId, e.getDetails().toPrettyString());
+                    throw new VideoNotFoundException("Video with ID: " + videoId + " not found or access denied.", e);
+                }
+
+                if (statusCode == 400 && errors != null && !errors.isEmpty()) {
+                    String reason = errors.get(0).getReason();
+                    if ("failedPrecondition".equals(reason)) {
+                        String apiMessage = errors.get(0).getMessage();
+                        // MainApp will log a user-friendly message. This log is for deeper debugging if needed.
+                        // LOGGER.debug("VideoPreconditionFailedException details for videoId: {}: Reason: {}, API Message: '{}', Details: {}", videoId, reason, apiMessage, e.getDetails().toPrettyString());
+                        throw new VideoPreconditionFailedException("Precondition failed for video ID: " + videoId + ". API Message: " + apiMessage, e);
+                    }
+                }
+            } else {
+                // Log for cases where details might be null, though less common for structured errors
+                LOGGER.error("GoogleJsonResponseException (details object is null) when adding videoId: {} to playlistId: {}. Status: {}, Message: {}", videoId, playlistId, e.getStatusCode(), e.getMessage(), e);
+            }
+            throw e; // Re-throw if not specifically handled above or if details were null
+        }
     }
 
     /**

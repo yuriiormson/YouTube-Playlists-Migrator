@@ -25,6 +25,9 @@ dependencies {
     // For logging (optional, but recommended)
     implementation 'org.slf4j:slf4j-simple:2.0.12' // Simple SLF4J implementation
 
+    // Apache POI for Excel generation
+    implementation 'org.apache.poi:poi-ooxml:5.2.5'
+
     // Test dependencies
     testImplementation platform('org.junit:junit-bom:5.10.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'

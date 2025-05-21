@@ -43,3 +43,6 @@ bin/
 /tokens/
 src/main/resources/client_secret.json
 migration_status.txt
+
+# Generated files
+Migration_Verification_Report_*.xlsx

@@ -6,9 +6,10 @@ import com.google.api.client.extensions.jetty.auth.oauth2.LocalServerReceiver;
 import com.google.api.client.googleapis.auth.oauth2.GoogleAuthorizationCodeFlow;
 import com.google.api.client.googleapis.auth.oauth2.GoogleClientSecrets;
 import com.google.api.client.googleapis.javanet.GoogleNetHttpTransport;
+import com.google.api.client.googleapis.json.GoogleJsonResponseException;
 import com.google.api.client.http.javanet.NetHttpTransport;
-import com.google.api.client.json.JsonFactory; // Keep this generic import
-import com.google.api.client.json.gson.GsonFactory; // Import GsonFactory
+import com.google.api.client.json.JsonFactory;
+import com.google.api.client.json.gson.GsonFactory;
 import com.google.api.client.util.store.FileDataStoreFactory;
 import com.google.api.services.youtube.YouTube;
 import com.google.api.services.youtube.model.Playlist;
@@ -22,9 +23,9 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional; // Додано імпорт
+import java.util.Optional; 
 import java.util.Properties;
-import java.util.Set; // Додано імпорт
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
@@ -158,6 +159,7 @@ public class MainApp {
             if (!playlistsToMigrate.isEmpty()) {
                 LOGGER.info("Starting migration for {} playlist(s)...", playlistsToMigrate.size());
 
+                boolean quotaErrorOccurred = false;
                 for (Playlist sourcePlaylist : playlistsToMigrate) {
                     String sourcePlaylistId = sourcePlaylist.getId();
                     String sourcePlaylistTitle = sourcePlaylist.getSnippet().getTitle();
@@ -168,6 +170,11 @@ public class MainApp {
                     if (detail != null && detail.importedVideos() >= detail.totalVideos() && detail.totalVideos() > 0) {
                         LOGGER.info("Playlist '{}' seems to be already fully migrated. Skipping.", sourcePlaylistTitle);
                         continue;
+                    }
+
+                    if (quotaErrorOccurred) {
+                        LOGGER.warn("Skipping playlist '{}' due to previous quota error.", sourcePlaylistTitle);
+                        break; // Stop processing further playlists if quota was hit
                     }
 
                     try {
@@ -208,11 +215,21 @@ public class MainApp {
                         for (PlaylistItem item : sourceItems) {
                             String videoId = item.getSnippet().getResourceId().getVideoId();
                             if (!existingTargetVideoIds.contains(videoId)) {
-                                LOGGER.debug("Adding video ID: {} to target playlist '{}'", videoId, targetPlaylist.getSnippet().getTitle());
-                                targetServiceManager.addVideoToPlaylist(targetPlaylist.getId(), videoId);
-                                videosAddedToTarget++;
+                                try {
+                                    LOGGER.debug("Attempting to add video ID: {} to target playlist '{}'", videoId, targetPlaylist.getSnippet().getTitle());
+                                    targetServiceManager.addVideoToPlaylist(targetPlaylist.getId(), videoId);
+                                    videosAddedToTarget++;
+                                    LOGGER.info("Successfully added video ID: {} to target playlist '{}'", videoId, targetPlaylist.getSnippet().getTitle());
+                                } catch (VideoNotFoundException vnfe) {
+                                    LOGGER.warn("Skipping video addition to playlist '{}'. Reason: {}. Video ID: {}. Investigate: https://www.youtube.com/watch?v={}",
+                                            targetPlaylist.getSnippet().getTitle(), vnfe.getMessage(), videoId, videoId);
+                                } catch (VideoPreconditionFailedException vpfe) {
+                                    LOGGER.warn("Skipping video addition to playlist '{}' due to precondition failure. Reason: {}. Video ID: {}. Investigate: https://www.youtube.com/watch?v={}",
+                                            targetPlaylist.getSnippet().getTitle(), vpfe.getMessage(), videoId, videoId);
+
+                                }
                             } else {
-                                LOGGER.debug("Video ID: {} already exists in target playlist '{}'. Skipping.", videoId, targetPlaylist.getSnippet().getTitle());
+                                LOGGER.debug("Video ID: {} already exists in target playlist '{}'. Skipping addition.", videoId, targetPlaylist.getSnippet().getTitle());
                             }
                                     if (API_CALL_DELAY_MS > 0) {
                                 try {
@@ -234,13 +251,39 @@ public class MainApp {
                         }
 
                     } catch (IOException e) {
-                        LOGGER.error("Error migrating playlist '{}': {}", sourcePlaylistTitle, e.getMessage(), e);
-                        // Optionally, log this error to the progress file or a separate error log
+                        if (e instanceof GoogleJsonResponseException) {
+                            GoogleJsonResponseException gjre = (GoogleJsonResponseException) e;
+                            if (gjre.getDetails() != null && gjre.getDetails().getErrors() != null && !gjre.getDetails().getErrors().isEmpty()) {
+                                String reason = gjre.getDetails().getErrors().get(0).getReason();
+                                if ("quotaExceeded".equals(reason)) {
+                                    LOGGER.error("FATAL: YouTube API quota exceeded while processing playlist '{}'. Halting further migration attempts.", sourcePlaylistTitle, e);
+                                    quotaErrorOccurred = true; // This will stop processing subsequent playlists
+                                } else if ("failedPrecondition".equals(reason)) {
+                                    LOGGER.error("Failed precondition migrating playlist '{}'. Details: {}", sourcePlaylistTitle, gjre.getDetails().toPrettyString(), e);
+                                    // Consider if this error should also halt all migrations:
+                                    // quotaErrorOccurred = true;
+                                } else {
+                                    LOGGER.error("Google API Error migrating playlist '{}' (Reason: {}): {}", sourcePlaylistTitle, reason, e.getMessage(), e);
+                                }
+                            } else {
+                                LOGGER.error("Google API Error (no specific details) migrating playlist '{}': {}", sourcePlaylistTitle, e.getMessage(), e);
+                            }
+                        } else {
+                            LOGGER.error("IO Error migrating playlist '{}': {}", sourcePlaylistTitle, e.getMessage(), e);
+                        }
                     } catch (Exception e) { // Catch other potential exceptions like InterruptedException
                         LOGGER.error("An unexpected error occurred during migration of playlist '{}': {}", sourcePlaylistTitle, e.getMessage(), e);
                     }
                 }
-                LOGGER.info("Migration process for selected playlists finished.");
+                if (quotaErrorOccurred) {
+                    LOGGER.info("Migration process for selected playlists INTERRUPTED due to quota error.");
+                } else {
+                    LOGGER.info("Migration process for selected playlists finished.");
+                }
+
+                // --- Verification Step ---
+                MigrationVerifier verifier = new MigrationVerifier(sourceServiceManager, targetServiceManager, MIGRATED_PLAYLIST_PREFIX);
+                verifier.generateVerificationReport(playlistsToMigrate, "."); // Output to current directory
             } else {
                 LOGGER.info("No playlists selected for migration.");
             }
